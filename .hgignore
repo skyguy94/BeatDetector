@@ -1,0 +1,9 @@
+syntax: glob
+BeatDetector.v11.suo
+BeatDetector.sln.DotSettings
+BeatDetector.ncrunchsolution.user
+BeatDetector.ncrunchsolution
+BeatDetector/BeatDetector.csproj.user
+bin/*
+obj/*
+packages/*

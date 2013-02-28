@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 
@@ -9,42 +8,35 @@ namespace BeatDetector
     public class SimpleEnergyCalculator
     {
         private const int BufferSize = 1024;
-        private const int AudioChannels = 2;
+        private const int AudioChannels = 1;
 
         private readonly Queue<double> _energyBuffer = new Queue<double>(43);
-
-        public void ComputeEnergy(FileInfo rawFile, FileInfo outputFile)
+        public IList<InstantaneousData> ComputeEnergy(FileInfo rawFile)
         {
-            var totalBytesRead = 0;
-            var totalBeats = 0;
-            Debug.WriteLine("Attempting to parse raw file: '{0}' with size {1}.", rawFile.Name, rawFile.Length);
-            var sw = Stopwatch.StartNew();
+            var data = new List<InstantaneousData>();
+            var totalBytesRead = 0d;
             using (var reader = new StreamReader(rawFile.FullName))
-            using (var writer = new StreamWriter(outputFile.FullName, false))
             {
                 const int bufferLength = BufferSize*AudioChannels;
                 var tmpBuffer = new char[bufferLength];
                 int bytesRead;
                 while ((bytesRead = reader.ReadBlock(tmpBuffer, 0, bufferLength)) != 0)
                 {
-                    Debug.WriteLineIf(bytesRead < bufferLength,
-                                      string.Format("Attempted to read {0} bytes and found {1} bytes.", bufferLength,
-                                                    bytesRead));
-
-                    var data = new InstantaneousData
+                    var id = new InstantaneousData
                         {
-                            Time = totalBytesRead / bufferLength,
+                            Time = (totalBytesRead / bufferLength) / 43d,
                             Value = ComputeInstantEnergy(tmpBuffer),
                         };
-                    data.CurrentAverage = ComputeUpdatedAverageEnergyValue(data.Value);
-                    totalBeats += data.BeatFound ? 1 : 0;
-                    WriteOutCurrentValuesAsCsv(writer, data);
+
+                    id.CurrentAverage = ComputeUpdatedAverageEnergyValue(id.Value);
+                    id.BeatFound = CheckForBeat(id.CurrentAverage, id.Value);
+                    data.Add(id);
+
                     totalBytesRead += bytesRead;
                 }
             }
 
-            Debug.WriteLine("File Processed in {0} seconds. {1} beats found in {2} bytes", sw.Elapsed.TotalSeconds,
-                            totalBeats, totalBytesRead);
+            return data;
         }
 
         private static double ComputeInstantEnergy(IList<char> data)
@@ -85,32 +77,8 @@ namespace BeatDetector
             if (Math.Abs(instant - 0) < .1 || Math.Abs(average) < .1) return false;
 
             const double cWeight = 1.8;
-            bool isBeat = instant > (cWeight * average);
-            Debug.WriteLineIf(isBeat,
-                              string.Format("Found beat with instantaneous value of {0} and local average of {1}",
-                                            instant, average));
+            var isBeat = instant > (cWeight * average);
             return isBeat;
-        }
-
-        private static void WriteOutCurrentValuesAsCsv(TextWriter writer, InstantaneousData data)
-        {
-            writer.WriteLine("{0},{1},{2}, {3}", data.Time, data.Value, data.CurrentAverage, data.BeatFound);
-        }
-    }
-
-    public class InstantaneousData
-    {
-        public double Time { get; set; }
-        public double Value { get; set; }
-        public double CurrentAverage { get; set; }
-
-        public bool BeatFound
-        {
-            get
-            {
-                var beatFound = SimpleEnergyCalculator.CheckForBeat(CurrentAverage, Value);
-                return beatFound;
-            }
         }
     }
 }
