@@ -6,7 +6,7 @@ using System.Linq;
 
 namespace BeatDetector
 {
-    public class SimpleEnergyCalculator
+    public class SimpleEnergyModel
     {
         private const int BufferSize = 1024;
         private const int AudioChannels = 2;
@@ -21,6 +21,7 @@ namespace BeatDetector
             var sw = Stopwatch.StartNew();
             using (var reader = new StreamReader(rawFile.FullName))
             using (var writer = new StreamWriter(outputFile.FullName, false))
+            using (var binner = new StreamWriter(Path.ChangeExtension(outputFile.FullName, "bin")))
             {
                 const int bufferLength = BufferSize*AudioChannels;
                 var tmpBuffer = new char[bufferLength];
@@ -33,11 +34,15 @@ namespace BeatDetector
 
                     var data = new InstantaneousData
                         {
-                            Time = totalBytesRead / bufferLength,
+                            Time = totalBytesRead / (44100d * AudioChannels),
                             Value = ComputeInstantEnergy(tmpBuffer),
                         };
                     data.CurrentAverage = ComputeUpdatedAverageEnergyValue(data.Value);
                     totalBeats += data.BeatFound ? 1 : 0;
+                    if (data.BeatFound)
+                    {
+                        binner.WriteLine("{0:F2},{1}", data.Time, data.BeatFound ? 1 : 0);
+                    }
                     WriteOutCurrentValuesAsCsv(writer, data);
                     totalBytesRead += bytesRead;
                 }
@@ -84,7 +89,7 @@ namespace BeatDetector
         {
             if (Math.Abs(instant - 0) < .1 || Math.Abs(average) < .1) return false;
 
-            const double cWeight = 1.8;
+            const double cWeight = 1.2;
             bool isBeat = instant > (cWeight * average);
             Debug.WriteLineIf(isBeat,
                               string.Format("Found beat with instantaneous value of {0} and local average of {1}",
@@ -92,25 +97,31 @@ namespace BeatDetector
             return isBeat;
         }
 
+        public List<ComplexNumber> DFT(IList<ComplexNumber> samples)
+        {
+            var results = Enumerable.Repeat(ComplexNumber.Zero, 0).ToList();
+            var N = samples.Count;
+            for (var k = 0; k < N; k++)
+            {
+                for (var n = 0; n < N; n++)
+                {
+                    var tmp = CreateComplexNumberFromPolar(1, -2 * Math.PI * n * k / N);
+                    results[k].Add(tmp.Multiply(samples[n]));
+                }
+            }
+
+            return results;
+        }
+
+        private static ComplexNumber CreateComplexNumberFromPolar(int r, double theta)
+        {
+            var result = new ComplexNumber(r * Math.Cos(theta), r * Math.Sin(theta));
+            return result;
+        }
+
         private static void WriteOutCurrentValuesAsCsv(TextWriter writer, InstantaneousData data)
         {
-            writer.WriteLine("{0},{1},{2}, {3}", data.Time, data.Value, data.CurrentAverage, data.BeatFound);
-        }
-    }
-
-    public class InstantaneousData
-    {
-        public double Time { get; set; }
-        public double Value { get; set; }
-        public double CurrentAverage { get; set; }
-
-        public bool BeatFound
-        {
-            get
-            {
-                var beatFound = SimpleEnergyCalculator.CheckForBeat(CurrentAverage, Value);
-                return beatFound;
-            }
+            writer.WriteLine("{0:F2},{1:F2},{2:F2}, {3}", data.Time, data.Value, data.CurrentAverage, data.BeatFound ? 1 : 0);
         }
     }
 }

@@ -9,7 +9,7 @@ namespace BeatDetector
         [Test]
         public void TestWithFullSample()
         {
-            var ec = new SimpleEnergyCalculator();
+            var ec = new SimpleEnergyModel();
             ec.ComputeEnergy(new FileInfo("D:\\sample.raw"), new FileInfo("D:\\sample.csv"));
         }
     }

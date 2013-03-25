@@ -6,8 +6,8 @@ namespace BeatDetector
     {
         public static void Main(string[] args)
         {
-            var ec = new SimpleEnergyCalculator();
-            ec.ComputeEnergy(new FileInfo("D:\\sample.raw"), new FileInfo("D:\\sample.csv"));
+            var ec = new DFTComputer();
+            ec.ComputeEnergy(new FileInfo("D:\\sample.raw"), new FileInfo("D:\\sample.dft"));
         }
     }
 }
