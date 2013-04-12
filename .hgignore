@@ -7,3 +7,4 @@ BeatDetector/BeatDetector.csproj.user
 bin/*
 obj/*
 packages/*
+*.user
