@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 
@@ -8,120 +7,102 @@ namespace BeatDetector
 {
     public class SimpleEnergyModel
     {
-        private const int BufferSize = 1024;
-        private const int AudioChannels = 2;
+        private readonly Queue<double> _energyBuffer = new Queue<double>();
+        private readonly Queue<double> _varianceBuffer = new Queue<double>();
+        private readonly double _instantanteousPeriod;
+        private readonly double _averagePeriod;
+        private int _samplesInInstantPeriod;
+        private int _samplesInAveragePeriod;
 
-        private readonly Queue<double> _energyBuffer = new Queue<double>(43);
-
-        public void ComputeEnergy(FileInfo rawFile, FileInfo outputFile)
+        public SimpleEnergyModel(double instantaneousPeriod, double averagePeriod)
         {
-            var totalBytesRead = 0;
-            var totalBeats = 0;
-            Debug.WriteLine("Attempting to parse raw file: '{0}' with size {1}.", rawFile.Name, rawFile.Length);
-            var sw = Stopwatch.StartNew();
-            using (var reader = new StreamReader(rawFile.FullName))
-            using (var writer = new StreamWriter(outputFile.FullName, false))
-            using (var binner = new StreamWriter(Path.ChangeExtension(outputFile.FullName, "bin")))
-            {
-                const int bufferLength = BufferSize*AudioChannels;
-                var tmpBuffer = new char[bufferLength];
-                int bytesRead;
-                while ((bytesRead = reader.ReadBlock(tmpBuffer, 0, bufferLength)) != 0)
-                {
-                    Debug.WriteLineIf(bytesRead < bufferLength,
-                                      string.Format("Attempted to read {0} bytes and found {1} bytes.", bufferLength,
-                                                    bytesRead));
+            if (instantaneousPeriod <= 0) throw new ArgumentException("The instantaneous period must be greater than zero.");
+            if (averagePeriod <= 0) throw new ArgumentException("The average period must be greater than zero.");
 
-                    var data = new InstantaneousData
+            _instantanteousPeriod = instantaneousPeriod;
+            _averagePeriod = averagePeriod;
+        }
+
+        public SimpleEnergyModel()
+            : this(1/43d, 1d)
+        {}
+
+        public IList<ComputedData> ComputeEnergyFromWAVFile(FileInfo rawFile)
+        {
+            var data = new List<ComputedData>();
+            using (var reader = new WAVFile(rawFile))
+            {
+                var header = reader.ReadHeader();
+
+                _samplesInInstantPeriod = (int)Math.Floor((header.SampleRate*_instantanteousPeriod)*header.NumberOfChannels);
+                _samplesInAveragePeriod = (int)Math.Floor((header.SampleRate*_averagePeriod)/_samplesInInstantPeriod);
+                var tmpBuffer = new char[_samplesInInstantPeriod];
+                int bytesRead, totalBytesRead = 0;
+
+                //Read the first chunk. IDK what to do with disconnected chunks.
+                using (var chunkStream = reader.SeekChunk(0))
+                while ((bytesRead = chunkStream.ReadBlock(tmpBuffer, 0, tmpBuffer.Length)) != 0)
+                {
+                    var id = new ComputedData
                         {
-                            Time = totalBytesRead / (44100d * AudioChannels),
-                            Value = ComputeInstantEnergy(tmpBuffer),
+                            Time = (totalBytesRead/(tmpBuffer.Length)/_samplesInAveragePeriod),
+                            InstantaneousEnergy = ComputeInstantEnergy(tmpBuffer.Select(s => (short)s)),
                         };
-                    data.CurrentAverage = ComputeUpdatedAverageEnergyValue(data.Value);
-                    totalBeats += data.BeatFound ? 1 : 0;
-                    if (data.BeatFound)
-                    {
-                        binner.WriteLine("{0:F2},{1}", data.Time, data.BeatFound ? 1 : 0);
-                    }
-                    WriteOutCurrentValuesAsCsv(writer, data);
+
+                    id.AverageEnergy = ComputeUpdatedAverageEnergy(id.InstantaneousEnergy);
+                    id.Factor = ComputeUpdatedVarianceFactor(id.InstantaneousEnergy, id.AverageEnergy);
+                    data.Add(id);
+
                     totalBytesRead += bytesRead;
                 }
             }
 
-            Debug.WriteLine("File Processed in {0} seconds. {1} beats found in {2} bytes", sw.Elapsed.TotalSeconds,
-                            totalBeats, totalBytesRead);
+            return data;
         }
 
-        private static double ComputeInstantEnergy(IList<char> data)
+        private static double ComputeInstantEnergy(IEnumerable<short> data)
         {
-            var instantEnergy = 0d;
-            for (var i = 0; i < BufferSize; i += 2)
-            {
-                var leftAudio = (short) data[i];
-                var rightAudio = (short) data[i + 1];
-
-                //Equation (R1)
-                var currentValue = Math.Pow(leftAudio, 2) + Math.Pow(rightAudio, 2);
-                instantEnergy += currentValue;
-            }
-
+            //Equation (R1)
+            double instantEnergy = data.Sum(s => Math.Pow(s, 2));
             return instantEnergy;
         }
 
-        private double ComputeUpdatedAverageEnergyValue(double instant)
+        private double ComputeUpdatedAverageEnergy(double instant)
         {
-            double average = 0;
-            if (_energyBuffer.Count == 43)
+            double averageEnergy = 0;
+            if (_energyBuffer.Count == _samplesInAveragePeriod)
             {
                 //Equation (R3)
-                average = _energyBuffer.Average();
+                averageEnergy = _energyBuffer.Average();
             }
 
             _energyBuffer.Enqueue(instant);
-            if (_energyBuffer.Count > 43)
+            if (_energyBuffer.Count > _samplesInAveragePeriod)
             {
                 _energyBuffer.Dequeue();
             }
-            return average;
+            return averageEnergy;
         }
 
-        public static bool CheckForBeat(double average, double instant)
+        private double ComputeUpdatedVarianceFactor(double instant, double average)
         {
-            if (Math.Abs(instant - 0) < .1 || Math.Abs(average) < .1) return false;
-
-            const double cWeight = 1.2;
-            bool isBeat = instant > (cWeight * average);
-            Debug.WriteLineIf(isBeat,
-                              string.Format("Found beat with instantaneous value of {0} and local average of {1}",
-                                            instant, average));
-            return isBeat;
-        }
-
-        public List<ComplexNumber> DFT(IList<ComplexNumber> samples)
-        {
-            var results = Enumerable.Repeat(ComplexNumber.Zero, 0).ToList();
-            var N = samples.Count;
-            for (var k = 0; k < N; k++)
+            double factor = 0;
+            if (_varianceBuffer.Count == _samplesInAveragePeriod)
             {
-                for (var n = 0; n < N; n++)
-                {
-                    var tmp = CreateComplexNumberFromPolar(1, -2 * Math.PI * n * k / N);
-                    results[k].Add(tmp.Multiply(samples[n]));
-                }
+                //Equation (R6)
+                var averageVariance = _varianceBuffer.Average();
+                factor = (-0.0025714 * averageVariance) + 1.5142857;
+                factor = (Math.Abs(factor) > 0.1) ? factor : 0;
             }
 
-            return results;
-        }
+            var currentVariance = Math.Pow(instant - average, 2);
+            _varianceBuffer.Enqueue(currentVariance);
+            if (_varianceBuffer.Count > _samplesInAveragePeriod)
+            {
+                _varianceBuffer.Dequeue();
+            }
 
-        private static ComplexNumber CreateComplexNumberFromPolar(int r, double theta)
-        {
-            var result = new ComplexNumber(r * Math.Cos(theta), r * Math.Sin(theta));
-            return result;
-        }
-
-        private static void WriteOutCurrentValuesAsCsv(TextWriter writer, InstantaneousData data)
-        {
-            writer.WriteLine("{0:F2},{1:F2},{2:F2}, {3}", data.Time, data.Value, data.CurrentAverage, data.BeatFound ? 1 : 0);
+            return factor;
         }
     }
 }

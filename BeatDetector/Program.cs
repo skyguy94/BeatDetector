@@ -1,22 +1,25 @@
-﻿using System;
-using System.IO;
+﻿using System.IO;
 using System.Linq;
 
 namespace BeatDetector
 {
+
+
     public class Program
     {
         public static void Main(string[] args)
         {
-            var file = new FileInfo(args[0]);
-            var ec = new SimpleEnergyCalculator();
-            var values = ec.ComputeEnergy(file);
+            var ec = new DFTComputer();
+            var data = ec.ComputeEnergyFromWAVFile(new FileInfo("D:\\drums.wav"));
 
-            using (var writer = new StreamWriter(Path.ChangeExtension(file.FullName, ".csv")))
+            var bd = new BeatAnalysis(data, 10);
+            using (var writer = new StreamWriter("D:\\drums.dft.csv"))
             {
-                var writeable = values.Select(v => string.Format("{0:2F},{1:2F},{2:2F},{3}", v.Time, v.Value, v.CurrentAverage, v.BeatFound));
-                var output = writeable.Aggregate((a, b) => a + Environment.NewLine + b);
-                writer.Write(output);
+                writer.WriteLine("time, e[k], <E>");
+                foreach (var value in bd.Beats.Distinct())  
+                {
+                    writer.WriteLine("{0:F2},{1:F2}, {2:F2}", value.Time, value.InstantaneousEnergy, value.AverageEnergy);
+                }
             }
         }
     }

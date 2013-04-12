@@ -9,8 +9,8 @@
 
         public ComplexNumber()
         {
-            Real = new double();
-            Imaginary = new double();
+            Real = 0d;
+            Imaginary = 0d;
         }
 
         public ComplexNumber(double real, double imaginary)
